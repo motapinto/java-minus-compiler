@@ -1,11 +1,8 @@
 import ollir.SethiUllmanGenerator;
 import ollir.SethiUllmanLabeler;
-import optimizations.ollir.data.MethodNode;
-import optimizations.ollir.data.VarNode;
-import optimizations.ollir.GraphPainter;
-import optimizations.ollir.InterferenceGraphMaker;
+import optimizations.ast.ConstantPropagator;
+import optimizations.ollir.GraphPainterException;
 import optimizations.ollir.RegisterAllocater;
-import org.specs.comp.ollir.ClassUnit;
 import org.specs.comp.ollir.OllirErrorException;
 import pt.up.fe.comp.TestUtils;
 import pt.up.fe.comp.jmm.JmmNode;
@@ -16,35 +13,31 @@ import pt.up.fe.comp.jmm.report.Report;
 import pt.up.fe.comp.jmm.report.Stage;
 import report.StyleReport;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.stream.Collectors;
 
 public class OptimizationStage implements JmmOptimization {
-    public static OllirResult run(JmmSemanticsResult semanticsResult) {
+    public static OllirResult run(JmmSemanticsResult semanticsResult, boolean optimize, int nRegisters) {
         // Checks input
         TestUtils.noErrors(semanticsResult.getReports());
 
         OptimizationStage optStage = new OptimizationStage();
 
-        if(Main.OPTIMIZATIONS) {
+        if(optimize) {
             optStage.optimize(semanticsResult);
         }
 
-        OllirResult ollirRes = optStage.toOllir(semanticsResult);
+        OllirResult ollirRes = optStage.toOllir(semanticsResult, optimize, nRegisters);
 
-        if(Main.NUM_REGISTERS > 0) {
-            ollirRes = optStage.allocateRegisters(ollirRes);
-        }
-
-        if(Main.OPTIMIZATIONS) {
+        if(optimize) {
             ollirRes = optStage.optimize(ollirRes);
         }
 
         return ollirRes;
     }
 
-    @Override
-    public OllirResult toOllir(JmmSemanticsResult semanticsResult, boolean optimize) {
+    public OllirResult toOllir(JmmSemanticsResult semanticsResult, boolean optimize, int nRegisters) {
         JmmNode root = semanticsResult.getRootNode();
         List<Report> reports = new ArrayList<>();
 
@@ -71,20 +64,22 @@ public class OptimizationStage implements JmmOptimization {
             reports.add(StyleReport.newError(Stage.LLIR, "Exception during Ollir code generation", e));
         }
 
-        if (optimize) {
-            allocateRegisters(ollirRes);
+        if (nRegisters > 0) {
+            ollirRes = allocateRegisters(ollirRes, nRegisters);
         }
 
         return ollirRes;
     }
 
-    public OllirResult allocateRegisters(OllirResult ollirResult) {
-        ClassUnit classUnit = ollirResult.getOllirClass();
-        Map<MethodNode, Map<VarNode, Set<VarNode>>> graph = new InterferenceGraphMaker(classUnit).create();
+    @Override
+    public OllirResult toOllir(JmmSemanticsResult semanticsResult, boolean optimize) {
+        return toOllir(semanticsResult, optimize, 0);
+    }
+
+    public OllirResult allocateRegisters(OllirResult ollirResult, int nRegisters) {
         try {
-            new GraphPainter(graph).paint(Main.NUM_REGISTERS);
-            new RegisterAllocater().allocate(graph);
-        } catch (GraphPainter.GraphPainterException e) {
+            new RegisterAllocater().allocate(ollirResult.getOllirClass(), nRegisters);
+        } catch (GraphPainterException e) {
             ollirResult.getReports().add(StyleReport.newError(Stage.OPTIMIZATION, "Exception during allocation of registers", e));
         }
 
@@ -93,7 +88,7 @@ public class OptimizationStage implements JmmOptimization {
 
     @Override
     public JmmSemanticsResult optimize(JmmSemanticsResult semanticsResult) {
-
+        new ConstantPropagator().visit(semanticsResult.getRootNode());
         return semanticsResult;
     }
 
