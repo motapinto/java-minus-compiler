@@ -63,6 +63,7 @@ public class BackendStage implements JasminBackend {
 
             return new JasminResult(ollirResult, jasminCode.toString(), reports);
         } catch (Exception e) {
+            e.printStackTrace();
             return new JasminResult(ollirClass.getClassName(), null,
                 Arrays.asList(StyleReport.newError(Stage.GENERATION, "Exception during Jasmin generation", e)));
         }
@@ -129,6 +130,7 @@ public class BackendStage implements JasminBackend {
                     .append(this.generateStackLimits())
                     .append(this.generateLocalLimits())
                     .append(body)
+                    .append(this.generatePops())
                     .append("\t\treturn\n");
             }
 
@@ -143,12 +145,13 @@ public class BackendStage implements JasminBackend {
 
                 classMethodsCode.append(")")
                     .append(BackendStage.generateType(method.getReturnType()))
+                    .append("\n")
                     .append(this.generateStackLimits())
                     .append(this.generateLocalLimits())
                     .append(body);
 
                 if(method.getReturnType().getTypeOfElement() == ElementType.VOID) {
-                    classMethodsCode.append("\t\treturn");
+                    classMethodsCode.append(this.generatePops()).append("\t\treturn");
                 }
 
                 classMethodsCode.append("\n");
@@ -163,7 +166,7 @@ public class BackendStage implements JasminBackend {
     }
 
     private String generateStackLimits() {
-        return "\n\t\t.limit stack " + (this.instrMaxStackSize + 2) + "\n";
+        return "\t\t.limit stack " + (this.instrMaxStackSize + 2) + "\n";
     }
 
     private String generateLocalLimits() {
@@ -225,7 +228,12 @@ public class BackendStage implements JasminBackend {
             String load = this.generateLoad(instr.getSingleOperand()) + this.generateLoad(index);
             this.instrCurrStackSize--;
 
-            return load + "\t\tiaload\n";
+            switch (instr.getSingleOperand().getType().getTypeOfElement()) {
+                case INT32 -> load += "\t\tiaload\n";
+                case STRING -> load += "\t\taaload\n";
+            }
+
+            return load;
         }
 
         return this.generateLoad(instr.getSingleOperand());
@@ -277,7 +285,7 @@ public class BackendStage implements JasminBackend {
                 case INT32, BOOLEAN -> descriptor.getVirtualReg() <= 3 ?
                     "iload_" + descriptor.getVirtualReg() + "\n" : "iload " + descriptor.getVirtualReg() + "\n";
                 case THIS -> "aload_0\n";
-                case ARRAYREF, CLASS, OBJECTREF -> descriptor.getVirtualReg() <= 3 ?
+                case ARRAYREF, CLASS, OBJECTREF, STRING -> descriptor.getVirtualReg() <= 3 ?
                     "aload_" + descriptor.getVirtualReg() + "\n" : "aload " + descriptor.getVirtualReg() + "\n";
                 default -> "";
             };
@@ -346,7 +354,7 @@ public class BackendStage implements JasminBackend {
             case INT32, BOOLEAN -> (descriptor.getVirtualReg() <= 3 ? "istore_" : "istore ") +
                     descriptor.getVirtualReg() + "\n";
             case THIS -> "astore_0\n";
-            case ARRAYREF, CLASS, OBJECTREF ->  (descriptor.getVirtualReg() <= 3 ? "astore_" : "astore ")
+            case ARRAYREF, CLASS, OBJECTREF, STRING ->  (descriptor.getVirtualReg() <= 3 ? "astore_" : "astore ")
                     + descriptor.getVirtualReg() + "\n";
             default -> "";
         };
@@ -559,7 +567,7 @@ public class BackendStage implements JasminBackend {
 
                 this.instrCurrStackSize -= (instr.getListOfOperands().size() + 1);
                 builder.append(generateMethodCallBody(instr, first, (LiteralElement) second));
-                this.instrCurrStackSize += instr.getReturnType().getTypeOfElement() != ElementType.VOID ? 1 : 0;
+                this.instrCurrStackSize += (instr.getReturnType().getTypeOfElement() != ElementType.VOID ? 1 : 0);
 
                 return builder.toString();
             }
@@ -818,7 +826,7 @@ public class BackendStage implements JasminBackend {
         StringBuilder pop = new StringBuilder();
 
         for(int i = this.instrCurrStackSize; i > 0; i--) {
-            if(this.instrCurrStackSize > 1) {
+            if(i > 1) {
                 pop.append("\t\tpop2\n");
                 i--;
             } else {
@@ -836,7 +844,8 @@ public class BackendStage implements JasminBackend {
             case INT32 -> "I";
             case BOOLEAN -> "Z";
             case VOID -> "V";
-            case OBJECTREF -> "L" + ((ClassType) type).getName() + ";";
+            case STRING -> "Ljava/lang/String;";
+            case OBJECTREF, CLASS -> "L" + ((ClassType) type).getName() + ";";
             default -> throw new IllegalStateException("Unexpected value: " + type.getTypeOfElement());
         };
     }
